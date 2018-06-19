@@ -1,0 +1,477 @@
+﻿This is a markdown file
+
+### 0.-Set the directory
+setwd("C:/Users/Marina/Documents/Dropbox/Microbioma/Learning and courses/Machine Learning R Coursera")
+
+### 1.-Download libraries
+library(caret)
+library(randomForest)
+library(rpart) 
+library(rpart.plot)
+library(RColorBrewer)
+library(rattle)
+
+#### 2.-Set a seed
+set.seed(1234)
+
+#### 3.-Read the  train and test files
+trainUrl<-"http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testUrl <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+training <- read.csv(url(trainUrl), na.strings=c("NA","#DIV/0!",""))
+testing <- read.csv(url(testUrl), na.strings=c("NA","#DIV/0!",""))
+dim(training)
+dim(testing)
+View(testing)
+colnames(training)
+summary(training)
+training$classe
+
+### 4.- Checking how many missiong values are
+is.na(training$classe) # no missing values in the trait
+sum(is.na(training$max_roll_belt)) # Many NA (19216) in some of the traits. I can remove them, or fill with the nearest neighbour
+19216
+
+19216/nrow(training)  ## 97% of missing values!!
+0.9793089
+
+### 5.-Partioning training data set in two, 60% for training and 40% for testing
+inTrain<-createDataPartition(y=training$classe, p=0.6, list=FALSE)
+M_Train<-training[inTrain,]
+M_Test<-training[-inTrain,]
+dim(M_Train)
+[1] 11776   160
+dim(M_Test)
+[1] 7846  160
+
+
+### 6.- Cleaning the data before using them to biult models
+
+                ### 6.1.- Remove variables with low variability (Non Zer Varibility)
+						myDataNZV <- nearZeroVar(M_Train)
+						myNZVvars <- names(M_Train) %in% c("new_window", "kurtosis_roll_belt", "kurtosis_picth_belt",
+															  "kurtosis_yaw_belt", "skewness_roll_belt", "skewness_roll_belt.1", "skewness_yaw_belt",
+															  "max_yaw_belt", "min_yaw_belt", "amplitude_yaw_belt", "avg_roll_arm", "stddev_roll_arm",
+															  "var_roll_arm", "avg_pitch_arm", "stddev_pitch_arm", "var_pitch_arm", "avg_yaw_arm",
+															  "stddev_yaw_arm", "var_yaw_arm", "kurtosis_roll_arm", "kurtosis_picth_arm",
+															  "kurtosis_yaw_arm", "skewness_roll_arm", "skewness_pitch_arm", "skewness_yaw_arm",
+															  "max_roll_arm", "min_roll_arm", "min_pitch_arm", "amplitude_roll_arm", "amplitude_pitch_arm",
+															  "kurtosis_roll_dumbbell", "kurtosis_picth_dumbbell", "kurtosis_yaw_dumbbell", "skewness_roll_dumbbell",
+															  "skewness_pitch_dumbbell", "skewness_yaw_dumbbell", "max_yaw_dumbbell", "min_yaw_dumbbell",
+															  "amplitude_yaw_dumbbell", "kurtosis_roll_forearm", "kurtosis_picth_forearm", "kurtosis_yaw_forearm",
+															  "skewness_roll_forearm", "skewness_pitch_forearm", "skewness_yaw_forearm", "max_roll_forearm",
+															  "max_yaw_forearm", "min_roll_forearm", "min_yaw_forearm", "amplitude_roll_forearm",
+															  "amplitude_yaw_forearm", "avg_roll_forearm", "stddev_roll_forearm", "var_roll_forearm",
+															  "avg_pitch_forearm", "stddev_pitch_forearm", "var_pitch_forearm", "avg_yaw_forearm",
+															  "stddev_yaw_forearm", "var_yaw_forearm")
+						M_Train <- M_Train[!myNZVvars]
+						
+						dim(M_Train)
+						[1] 11776   100
+
+                 ### 6.2- Remove the first colum, which is the ID
+						M_Train <- M_Train[c(-1)]
+                  
+                 ### 6.3.- Removing variables with many NA
+                        #Check the proprotion of missing values in each predictor
+                    Prop_NA<-data.frame()
+                    dim(Prop_NA)
+                          for(i in 1:ncol(M_Train)) {   
+                                    P<-sum(is.na(M_Train[,i]))/nrow(M_Train)
+                                    Prop_NA[1,i]<-P}
+									
+                    colnames(Prop_NA)<-colnames(M_Train)
+                    sum(Prop_NA == 0) ##60 variables with no missing values
+					[1] 58
+                    sum(Prop_NA < 0.95) ### I am goin to keep only 58/160 variables
+					[1] 58
+                       #Remove variables with NA
+                    trainingV3 <- M_Train #creating another subset to iterate in loop
+                    for(i in 1:length(M_Train)) { #for every column in the training dataset
+                      if( sum( is.na( M_Train[, i] ) ) /nrow(M_Train) >= .6 ) { #if n?? NAs > 60% of total observations
+                        for(j in 1:length(trainingV3)) {
+                          if( length( grep(names(M_Train[i]), names(trainingV3)[j]) ) ==1)  { #if the columns are the same:
+                            trainingV3 <- trainingV3[ , -j] #Remove that column
+                          }   
+                        } 
+                      }
+                    }
+                    #To check the new N?? of observations
+                    dim(trainingV3)
+                    ## [1] 11776    58
+                    #Setting back to our set:
+                    M_Train <- trainingV3
+                    rm(trainingV3)
+                    
+				### 6.4- Repeat the same for the M_test set and testing set
+                    clean1 <- colnames(M_Train)
+                    clean2 <- colnames(M_Train[, -58]) #already with classe column removed
+                    M_Test <- M_Test[clean1]
+                    testing <- testing[clean2]
+					dim(M_Test)
+					[1] 7846   58
+					dim(testing)
+					[1] 20 57
+					
+### 7-.Coerce the data into the same type.
+                    for (i in 1:length(testing) ) {
+                      for(j in 1:length(M_Train)) {
+                        if( length( grep(names(M_Train[i]), names(testing)[j]) ) ==1)  {
+                          class(testing[j]) <- class(M_Train[i])
+                        }      
+                      }      
+                    }
+                    #And to make sure Coertion really worked, simple smart ass technique:
+                    testing <- rbind(M_Train[2, -58] , testing) #note row 2 does not mean anything, this will be removed right.. now:
+                    testing <- testing[-1,]	
+
+	### 7-.Coerce the data into the same type.
+                    for (i in 1:length(testing) ) {
+                      for(j in 1:length(M_Train)) {
+                        if( length( grep(names(M_Train[i]), names(testing)[j]) ) ==1)  {
+                          class(testing[j]) <- class(M_Train[i])
+                        }      
+                      }      
+                    }
+                    #And to make sure Coertion really worked, simple smart ass technique:
+                    testing <- rbind(M_Train[2, -58] , testing) #note row 2 does not mean anything, this will be removed right.. now:
+                    testing <- testing[-1,]	
+
+	### 8.-Built different algorithms
+                  # 8.1. Decision trees
+                  modFitA1 <- rpart(classe ~ ., data=M_Train, method="class")
+                  fancyRpartPlot(modFitA1)
+                  predictionsA1 <- predict(modFitA1, M_Test, type = "class") ## predict M_Test
+                  confusionMatrix(predictionsA1, M_Test$classe)  #check the Acuraccy		
+				
+												Confusion Matrix and Statistics
+
+										  Reference
+								Prediction    A    B    C    D    E
+										 A 2161   61    5    3    0
+										 B   50 1271   95   64    0
+										 C   21  177 1242  203   65
+										 D    0    9   19  899   92
+										 E    0    0    7  117 1285
+
+								Overall Statistics
+																		  
+											   Accuracy : 0.8741          
+												 95% CI : (0.8665, 0.8813)
+									No Information Rate : 0.2845          
+									P-Value [Acc > NIR] : < 2.2e-16       
+																		  
+												  Kappa : 0.8407          
+								 Mcnemar's Test P-Value : NA              
+
+								Statistics by Class:
+
+													 Class: A Class: B Class: C Class: D Class: E
+								Sensitivity            0.9682   0.8373   0.9079   0.6991   0.8911
+								Specificity            0.9877   0.9670   0.9281   0.9817   0.9806
+								Pos Pred Value         0.9691   0.8588   0.7272   0.8822   0.9120
+								Neg Pred Value         0.9874   0.9612   0.9795   0.9433   0.9756
+								Prevalence             0.2845   0.1935   0.1744   0.1639   0.1838
+								Detection Rate         0.2754   0.1620   0.1583   0.1146   0.1638
+								Detection Prevalence   0.2842   0.1886   0.2177   0.1299   0.1796
+								Balanced Accuracy      0.9779   0.9021   0.9180   0.8404   0.9359
+								
+				# 8.2. Random Forest
+                  modFitB1 <- randomForest(classe ~. , data=M_Train)
+                  predictionsB1 <- predict(modFitB1, M_Test, type = "class")
+                  confusionMatrix(predictionsB1, M_Test$classe)  ## RForest works better
+				   
+R version 3.5.0 (2018-04-23) -- "Joy in Playing"
+Copyright (C) 2018 The R Foundation for Statistical Computing
+Platform: x86_64-w64-mingw32/x64 (64-bit)
+
+R is free software and comes with ABSOLUTELY NO WARRANTY.
+You are welcome to redistribute it under certain conditions.
+Type 'license()' or 'licence()' for distribution details.
+
+R is a collaborative project with many contributors.
+Type 'contributors()' for more information and
+'citation()' on how to cite R or R packages in publications.
+
+Type 'demo()' for some demos, 'help()' for on-line help, or
+'help.start()' for an HTML browser interface to help.
+Type 'q()' to quit R.
+
+> setwd("C:/Users/Marina/Documents/Dropbox/Microbioma/Learning and courses/Machine Learning R Coursera")
+> ### 1.-Download libraries
+> library(caret)
+Loading required package: lattice
+Loading required package: ggplot2
+> library(randomForest)
+randomForest 4.6-14
+Type rfNews() to see new features/changes/bug fixes.
+
+Attaching package: ‘randomForest’
+
+The following object is masked from ‘package:ggplot2’:
+
+    margin
+
+> library(rpart)
+> library(rpart.plot)
+> library(RColorBrewer)
+> library(rattle)
+Rattle: A free graphical interface for data science with R.
+Versión 5.1.0 Copyright (c) 2006-2017 Togaware Pty Ltd.
+Escriba 'rattle()' para agitar, sacudir y  rotar sus datos.
+
+Attaching package: ‘rattle’
+
+The following object is masked from ‘package:randomForest’:
+
+    importance
+
+> #### 2.-set a seed
+> set.seed(1234)
+
+
+> #### 3.-Read the  train and test files
+> trainUrl<-"http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+> testUrl <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+> training <- read.csv(url(trainUrl), na.strings=c("NA","#DIV/0!",""))
+
+
+> ### 4.- Checking how many missiong values are
+> is.na(training$classe) # no missing values in the trait
+   [1] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+  [20] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+  [39] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+  [58] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+  [77] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+  [96] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [115] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [134] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [153] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [172] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [191] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [210] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [229] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [248] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [267] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [286] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [305] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [324] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [343] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [362] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [381] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [400] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [419] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [438] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [457] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [476] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [495] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [514] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [533] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [552] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [571] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [590] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [609] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [628] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [647] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [666] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [685] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [704] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [723] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [742] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [761] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [780] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [799] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [818] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [837] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [856] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [875] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [894] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [913] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [932] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [951] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [970] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [989] FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE FALSE
+ [ reached getOption("max.print") -- omitted 18622 entries ]
+> sum(is.na(training$max_roll_belt)) # Many NA (19216) in some of the traits. I can remove them, or fill with the nearest neighbour
+[1] 19216
+> 19216/nrow(training)  ## 97% of missing values!!
+[1] 0.9793089
+
+
+> ### 5.-Partioning training data set in two, 60% for training and 40% for testing
+> inTrain<-createDataPartition(y=training$classe, p=0.6, list=FALSE)
+> M_Train<-training[inTrain,]
+> M_Test<-training[-inTrain,]
+> dim(M_Train)
+[1] 11776   160
+> dim(M_Test)
+[1] 7846  160
+
+### 6.-Clean the data
+
+> ### 6.1.- Remove variables with low variability (Non Zer Varibility)
+>                 myDataNZV <- nearZeroVar(M_Train)
+> myNZVvars <- names(M_Train) %in% c("new_window", "kurtosis_roll_belt", "kurtosis_picth_belt",
++                                                       "kurtosis_yaw_belt", "skewness_roll_belt", "skewness_roll_belt.1", "skewness_yaw_belt",
++                                                       "max_yaw_belt", "min_yaw_belt", "amplitude_yaw_belt", "avg_roll_arm", "stddev_roll_arm",
++                                                       "var_roll_arm", "avg_pitch_arm", "stddev_pitch_arm", "var_pitch_arm", "avg_yaw_arm",
++                                                       "stddev_yaw_arm", "var_yaw_arm", "kurtosis_roll_arm", "kurtosis_picth_arm",
++                                                       "kurtosis_yaw_arm", "skewness_roll_arm", "skewness_pitch_arm", "skewness_yaw_arm",
++                                                       "max_roll_arm", "min_roll_arm", "min_pitch_arm", "amplitude_roll_arm", "amplitude_pitch_arm",
++                                                       "kurtosis_roll_dumbbell", "kurtosis_picth_dumbbell", "kurtosis_yaw_dumbbell", "skewness_roll_dumbbell",
++                                                       "skewness_pitch_dumbbell", "skewness_yaw_dumbbell", "max_yaw_dumbbell", "min_yaw_dumbbell",
++                                                       "amplitude_yaw_dumbbell", "kurtosis_roll_forearm", "kurtosis_picth_forearm", "kurtosis_yaw_forearm",
++                                                       "skewness_roll_forearm", "skewness_pitch_forearm", "skewness_yaw_forearm", "max_roll_forearm",
++                                                       "max_yaw_forearm", "min_roll_forearm", "min_yaw_forearm", "amplitude_roll_forearm",
++                                                       "amplitude_yaw_forearm", "avg_roll_forearm", "stddev_roll_forearm", "var_roll_forearm",
++                                                       "avg_pitch_forearm", "stddev_pitch_forearm", "var_pitch_forearm", "avg_yaw_forearm",
++                                                       "stddev_yaw_forearm", "var_yaw_forearm")
+> M_Train <- M_Train[!myNZVvars]
+> dim(M_Train)
+[1] 11776   100
+> ### 6.2- Remove the first colum, which is the ID
+>                 M_Train <- M_Train[c(-1)]
+
+> ### 6.3.- Removing variables with many NA
+>                         #Check the proprotion of missing values in each predictor
+>                     Prop_NA<-data.frame()
+> dim(Prop_NA)
+[1] 0 0
+> for(i in 1:ncol(M_Train)) {   
++                                     P<-sum(is.na(M_Train[,i]))/nrow(M_Train)
++                                     Prop_NA[1,i]<-P}
+> colnames(Prop_NA)<-colnames(M_Train)
+> sum(Prop_NA == 0) ##58 variables with no missing values
+[1] 58
+> sum(Prop_NA < 0.95) ### I am goin to keot only 58/160 variables
+[1] 58
+> #Remove variables with NA
+>                     trainingV3 <- M_Train #creating another subset to iterate in loop
+> for(i in 1:length(M_Train)) { #for every column in the training dataset
++                       if( sum( is.na( M_Train[, i] ) ) /nrow(M_Train) >= .6 ) { #if n?? NAs > 60% of total observations
++                         for(j in 1:length(trainingV3)) {
++                           if( length( grep(names(M_Train[i]), names(trainingV3)[j]) ) ==1)  { #if the columns are the same:
++                             trainingV3 <- trainingV3[ , -j] #Remove that column
++                           }   
++                         } 
++                       }
++                     }
+> #To check the new N?? of observations
+>                     dim(trainingV3)
+[1] 11776    58
+> ## [1] 11776    58
+>                     #Setting back to our set:
+>                     M_Train <- trainingV3
+> rm(trainingV3)
+
+> ### 6.4- Repeat the same for the M_test set and testing set
+>                     clean1 <- colnames(M_Train)
+> clean2 <- colnames(M_Train[, -58]) #already with classe column removed
+> M_Test <- M_Test[clean1]
+> testing <- testing[clean2]
+Error: object 'testing' not found
+> testing <- read.csv(url(testUrl), na.strings=c("NA","#DIV/0!",""))
+> dim(testing)
+[1]  20 160
+> testing <- testing[clean2]
+> dim(M_Test)
+[1] 7846   58
+> dim(testing)
+[1] 20 57
+
+
+> ### 7-.Coerce the data into the same type.
+>                     for (i in 1:length(testing) ) {
++                       for(j in 1:length(M_Train)) {
++                         if( length( grep(names(M_Train[i]), names(testing)[j]) ) ==1)  {
++                           class(testing[j]) <- class(M_Train[i])
++                         }      
++                       }      
++                     }
+> #And to make sure Coertion really worked, simple smart ass technique:
+>                     testing <- rbind(M_Train[2, -58] , testing) #note row 2 does not mean anything, this will be removed right.. now:
+> testing <- testing[-1,]
+
+
+> ### 8.-Built different algorithms
+>                   # 8.1. Decision trees
+>                   modFitA1 <- rpart(classe ~ ., data=M_Train, method="class")
+> fancyRpartPlot(modFitA1)
+> predictionsA1 <- predict(modFitA1, M_Test, type = "class") ## predict M_Test
+> predictionsA1 <- predict(modFitA1, M_Test, type = "class") ## predict M_Test
+> confusionMatrix(predictionsA1, M_Test$classe)  #check the Acuraccy
+								Confusion Matrix and Statistics
+
+										  Reference
+								Prediction    A    B    C    D    E
+										 A 2161   61    5    3    0
+										 B   50 1271   95   64    0
+										 C   21  177 1242  203   65
+										 D    0    9   19  899   92
+										 E    0    0    7  117 1285
+
+								Overall Statistics
+																		  
+											   Accuracy : 0.8741          
+												 95% CI : (0.8665, 0.8813)
+									No Information Rate : 0.2845          
+									P-Value [Acc > NIR] : < 2.2e-16       
+																		  
+												  Kappa : 0.8407          
+								 Mcnemar's Test P-Value : NA              
+
+								Statistics by Class:
+
+													 Class: A Class: B Class: C Class: D Class: E
+								Sensitivity            0.9682   0.8373   0.9079   0.6991   0.8911
+								Specificity            0.9877   0.9670   0.9281   0.9817   0.9806
+								Pos Pred Value         0.9691   0.8588   0.7272   0.8822   0.9120
+								Neg Pred Value         0.9874   0.9612   0.9795   0.9433   0.9756
+								Prevalence             0.2845   0.1935   0.1744   0.1639   0.1838
+								Detection Rate         0.2754   0.1620   0.1583   0.1146   0.1638
+								Detection Prevalence   0.2842   0.1886   0.2177   0.1299   0.1796
+								Balanced Accuracy      0.9779   0.9021   0.9180   0.8404   0.9359
+> # 8.2. Random Forest
+> modFitB1 <- randomForest(classe ~. , data=M_Train)
+> predictionsB1 <- predict(modFitB1, M_Test, type = "class")
+> confusionMatrix(predictionsB1, M_Test$classe)  ## RForest works better
+		Confusion Matrix and Statistics
+
+				  Reference
+		Prediction    A    B    C    D    E
+				 A 2232    2    0    0    0
+				 B    0 1516    3    0    0
+				 C    0    0 1363    5    0
+				 D    0    0    2 1280    1
+				 E    0    0    0    1 1441
+
+		Overall Statistics
+												
+					   Accuracy : 0.9982        
+						 95% CI : (0.997, 0.999)
+			No Information Rate : 0.2845        
+			P-Value [Acc > NIR] : < 2.2e-16     
+												
+						  Kappa : 0.9977        
+		 Mcnemar's Test P-Value : NA            
+
+		Statistics by Class:
+
+							 Class: A Class: B Class: C Class: D Class: E
+		Sensitivity            1.0000   0.9987   0.9963   0.9953   0.9993
+		Specificity            0.9996   0.9995   0.9992   0.9995   0.9998
+		Pos Pred Value         0.9991   0.9980   0.9963   0.9977   0.9993
+		Neg Pred Value         1.0000   0.9997   0.9992   0.9991   0.9998
+		Prevalence             0.2845   0.1935   0.1744   0.1639   0.1838
+		Detection Rate         0.2845   0.1932   0.1737   0.1631   0.1837
+		Detection Prevalence   0.2847   0.1936   0.1744   0.1635   0.1838
+		Balanced Accuracy      0.9998   0.9991   0.9978   0.9974   0.9996
+		
+### 9.- Out of sample error
+
+                  predictionsB2 <- predict(modFitB1, testing, type = "class")
+                  predictionsB2
+				  
+				   1  2 31  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19 20 
+					 B  A  B  A  A  E  D  B  A  A  B  C  B  A  E  E  A  B  B  B 
+					Levels: A B C D E
+		
